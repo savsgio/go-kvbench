@@ -1,0 +1,6 @@
+.*db
+*.db
+# pogreb.*
+*.tmp
+
+bin/

@@ -1,0 +1,14 @@
+duration=1m0s, c=12 size=256
+leveldb/nofsync batch write test inserted: 5037000 entries; took: 1m2.436940962s s
+leveldb/nofsync set rate: 240212 op/s, mean: 346 ns, took: 60 s
+leveldb/nofsync get rate: 917005 op/s, mean: 90 ns, took: 60 s
+leveldb/nofsync setmixed rate: 30420 op/s, mean: 32872 ns, took: 60 s
+leveldb/nofsync getmixed rate: 507333 op/s, mean: 164 ns, took: 60 s
+leveldb/nofsync del rate: 233782 op/s, mean: 356 ns, took: 60 s
+duration=1m0s, c=12 size=256
+leveldb/fsync batch write test inserted: 1407000 entries; took: 1m4.714915221s s
+leveldb/fsync set rate: 257 op/s, mean: 323162 ns, took: 60 s
+leveldb/fsync get rate: 2265868 op/s, mean: 36 ns, took: 60 s
+leveldb/fsync setmixed rate: 39 op/s, mean: 25052197 ns, took: 60 s
+leveldb/fsync getmixed rate: 2257516 op/s, mean: 36 ns, took: 60 s
+leveldb/fsync del rate: 48422 op/s, mean: 1720 ns, took: 60 s

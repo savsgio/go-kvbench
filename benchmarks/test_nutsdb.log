@@ -1,0 +1,14 @@
+duration=1m0s, c=12 size=256
+nutsdb/nofsync batch write test inserted: 16487000 entries; took: 1m0.035518123s s
+nutsdb/nofsync set rate: 163634 op/s, mean: 509 ns, took: 60 s
+nutsdb/nofsync get rate: 1523143 op/s, mean: 54 ns, took: 60 s
+nutsdb/nofsync setmixed rate: 38053 op/s, mean: 26278 ns, took: 59 s
+nutsdb/nofsync getmixed rate: 487173 op/s, mean: 171 ns, took: 59 s
+nutsdb/nofsync del rate: 141004 op/s, mean: 590 ns, took: 60 s
+duration=1m0s, c=12 size=256
+nutsdb/fsync batch write test inserted: 14000 entries; took: 5m51.592107443s s
+nutsdb/fsync set rate: 39 op/s, mean: 2096974 ns, took: 60 s
+nutsdb/fsync get rate: 3938206 op/s, mean: 21 ns, took: 60 s
+nutsdb/fsync setmixed rate: 39 op/s, mean: 25141020 ns, took: 60 s
+nutsdb/fsync getmixed rate: 592 op/s, mean: 140531 ns, took: 60 s
+nutsdb/fsync del rate: 39 op/s, mean: 2091587 ns, took: 60 s

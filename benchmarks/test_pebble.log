@@ -1,0 +1,14 @@
+duration=1m0s, c=12 size=256
+pebble/nofsync batch write test inserted: 1355000 entries; took: 1m0.385861038s s
+pebble/nofsync set rate: 147759 op/s, mean: 563 ns, took: 60 s
+pebble/nofsync get rate: 474609 op/s, mean: 175 ns, took: 60 s
+pebble/nofsync setmixed rate: 228020 op/s, mean: 4385 ns, took: 60 s
+pebble/nofsync getmixed rate: 315736 op/s, mean: 263 ns, took: 60 s
+pebble/nofsync del rate: 745286 op/s, mean: 111 ns, took: 60 s
+duration=1m0s, c=12 size=256
+pebble/fsync batch write test inserted: 1052000 entries; took: 1m4.035530345s s
+pebble/fsync set rate: 225 op/s, mean: 370008 ns, took: 60 s
+pebble/fsync get rate: 4720694 op/s, mean: 17 ns, took: 60 s
+pebble/fsync setmixed rate: 38 op/s, mean: 25965942 ns, took: 60 s
+pebble/fsync getmixed rate: 4589332 op/s, mean: 18 ns, took: 60 s
+pebble/fsync del rate: 239 op/s, mean: 348505 ns, took: 60 s

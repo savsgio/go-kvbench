@@ -1,0 +1,14 @@
+duration=1m0s, c=12 size=256
+pogreb/nofsync batch write test inserted: 6049000 entries; took: 1m0.044978343s s
+pogreb/nofsync set rate: 92540 op/s, mean: 900 ns, took: 60 s
+pogreb/nofsync get rate: 4335120 op/s, mean: 19 ns, took: 60 s
+pogreb/nofsync setmixed rate: 46682 op/s, mean: 21421 ns, took: 60 s
+pogreb/nofsync getmixed rate: 561806 op/s, mean: 148 ns, took: 60 s
+pogreb/nofsync del rate: 263947 op/s, mean: 315 ns, took: 60 s
+duration=1m0s, c=12 size=256
+pogreb/fsync batch write test inserted: 12000 entries; took: 5m1.183776496s s
+pogreb/fsync set rate: 39 op/s, mean: 2090525 ns, took: 60 s
+pogreb/fsync get rate: 4564589 op/s, mean: 18 ns, took: 60 s
+pogreb/fsync setmixed rate: 39 op/s, mean: 25053597 ns, took: 60 s
+pogreb/fsync getmixed rate: 510 op/s, mean: 163221 ns, took: 60 s
+pogreb/fsync del rate: 39 op/s, mean: 2083977 ns, took: 60 s

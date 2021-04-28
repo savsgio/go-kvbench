@@ -1,0 +1,14 @@
+duration=1m0s, c=12 size=256
+buntdb/nofsync batch write test inserted: 40721000 entries; took: 1m0.013101761s s
+buntdb/nofsync set rate: 36449 op/s, mean: 2286 ns, took: 60 s
+buntdb/nofsync get rate: 4956283 op/s, mean: 16 ns, took: 60 s
+buntdb/nofsync setmixed rate: 2275 op/s, mean: 439442 ns, took: 60 s
+buntdb/nofsync getmixed rate: 27684 op/s, mean: 3010 ns, took: 60 s
+buntdb/nofsync del rate: 1137630 op/s, mean: 73 ns, took: 60 s
+duration=1m0s, c=12 size=256
+buntdb/fsync batch write test inserted: 2192000 entries; took: 1m0.314270751s s
+buntdb/fsync set rate: 38 op/s, mean: 2151620 ns, took: 60 s
+buntdb/fsync get rate: 5550962 op/s, mean: 15 ns, took: 60 s
+buntdb/fsync setmixed rate: 36 op/s, mean: 27252582 ns, took: 60 s
+buntdb/fsync getmixed rate: 455 op/s, mean: 183006 ns, took: 60 s
+buntdb/fsync del rate: 3241 op/s, mean: 25708 ns, took: 60 s
