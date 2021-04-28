@@ -149,7 +149,11 @@ func (db *DB) Keys(pattern []byte, limit int, withvals bool) ([]store.KV, error)
 	var kvs []store.KV
 
 	err := db.db.View(func(tx *buntdb.Tx) error {
-		return tx.AscendKeys(string(pattern), func(key, value string) bool {
+		return tx.AscendKeys(strconv.B2S(pattern), func(key, value string) bool {
+			if limit > -1 && len(kvs) >= limit {
+				return false
+			}
+
 			kv := store.KV{}
 			kv.Key = append(kv.Key, key...)
 

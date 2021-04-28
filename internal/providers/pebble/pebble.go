@@ -142,6 +142,10 @@ func (db *DB) Keys(pattern []byte, limit int, withvals bool) ([]store.KV, error)
 	it.SeekGE(pattern)
 
 	for it.Valid() && it.Next() {
+		if limit > -1 && len(kvs) >= limit {
+			break
+		}
+
 		key := it.Key()
 		if !bytes.HasPrefix(key, pattern) {
 			continue

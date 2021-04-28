@@ -168,6 +168,10 @@ func (db *DB) Keys(pattern []byte, limit int, withvals bool) ([]store.KV, error)
 		}
 
 		for i := range entries {
+			if limit > -1 && len(kvs) >= limit {
+				break
+			}
+
 			entry := entries[i]
 
 			kv := store.KV{}

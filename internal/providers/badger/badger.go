@@ -135,6 +135,10 @@ func (db *DB) Keys(pattern []byte, limit int, withvals bool) ([]store.KV, error)
 		defer it.Close()
 
 		for it.Seek(pattern); it.ValidForPrefix(pattern); it.Next() {
+			if limit > -1 && len(kvs) >= limit {
+				break
+			}
+
 			item := it.Item()
 
 			kv := store.KV{}
