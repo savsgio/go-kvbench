@@ -3,7 +3,6 @@ package pebble
 import (
 	"bytes"
 	"errors"
-	"sync"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/savsgio/gotils/strconv"
@@ -11,9 +10,8 @@ import (
 )
 
 type DB struct {
-	db        *pebble.DB
-	wo        *pebble.WriteOptions
-	batchPool sync.Pool
+	db *pebble.DB
+	wo *pebble.WriteOptions
 }
 
 func New(path string, fsync bool) (store.Store, error) {
@@ -37,21 +35,15 @@ func New(path string, fsync bool) (store.Store, error) {
 	return &DB{
 		db: db,
 		wo: wo,
-		batchPool: sync.Pool{
-			New: func() interface{} {
-				return db.NewBatch()
-			},
-		},
 	}, nil
 }
 
 func (db *DB) acquireBatch() *pebble.Batch {
-	return db.batchPool.Get().(*pebble.Batch)
+	return db.db.NewBatch()
 }
 
 func (db *DB) releaseBatch(batch *pebble.Batch) {
-	batch.Reset()
-	db.batchPool.Put(batch)
+	batch.Close()
 }
 
 func (db *DB) Set(key, value []byte) error {
