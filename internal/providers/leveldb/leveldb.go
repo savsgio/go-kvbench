@@ -165,13 +165,14 @@ func (db *DB) DelBulk(keys [][]byte) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
+	batch := db.acquireBatch()
+	defer db.releaseBatch(batch)
+
 	for i := range keys {
-		if err := db.del(keys[i]); err != nil {
-			return err
-		}
+		batch.Delete(keys[i])
 	}
 
-	return nil
+	return db.db.Write(batch, &db.wo)
 }
 
 func (db *DB) Keys(pattern []byte, limit int, withvals bool) ([]store.KV, error) {

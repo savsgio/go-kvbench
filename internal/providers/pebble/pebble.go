@@ -124,13 +124,16 @@ func (db *DB) DelString(key string) error {
 }
 
 func (db *DB) DelBulk(keys [][]byte) error {
+	batch := db.acquireBatch()
+	defer db.releaseBatch(batch)
+
 	for i := range keys {
-		if err := db.Del(keys[i]); err != nil {
+		if err := batch.Delete(keys[i], db.wo); err != nil {
 			return err
 		}
 	}
 
-	return nil
+	return batch.Commit(db.wo)
 }
 
 func (db *DB) Keys(pattern []byte, limit int, withvals bool) ([]store.KV, error) {
