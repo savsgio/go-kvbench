@@ -6,52 +6,51 @@ import (
 	"sync"
 
 	"github.com/savsgio/gotils/strconv"
+	"github.com/savsgio/kvbench/internal/common"
 	"github.com/savsgio/kvbench/internal/store"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
-	"github.com/tidwall/match"
 )
 
 type DB struct {
-	db        *leveldb.DB
-	wo        opt.WriteOptions
 	path      string
 	fsync     bool
+	db        *leveldb.DB
+	wo        opt.WriteOptions
 	mu        sync.RWMutex
 	batchPool sync.Pool
 }
 
-func New(path string, fsync bool) (store.Store, error) {
-	if path == ":memory:" {
-		return nil, store.ErrMemoryNotAllowed
-	}
-
-	db, err := newDB(path, fsync)
-	if err != nil {
-		return nil, err
-	}
-
-	return &DB{
-		db:    db,
-		wo:    opt.WriteOptions{Sync: fsync},
+func New(path string, fsync bool) (store.DB, error) {
+	db := &DB{
 		path:  path,
 		fsync: fsync,
+		wo:    opt.WriteOptions{Sync: fsync},
 		batchPool: sync.Pool{
 			New: func() interface{} {
 				return new(leveldb.Batch)
 			},
 		},
-	}, nil
-}
+	}
 
-func newDB(path string, fsync bool) (*leveldb.DB, error) {
-	opts := &opt.Options{NoSync: !fsync}
-	db, err := leveldb.OpenFile(path, opts)
-	if err != nil {
+	if err := db.init(); err != nil {
 		return nil, err
 	}
 
 	return db, nil
+}
+
+func (db *DB) init() error {
+	opts := &opt.Options{NoSync: !db.fsync}
+
+	ldb, err := leveldb.OpenFile(db.path, opts)
+	if err != nil {
+		return err
+	}
+
+	db.db = ldb
+
+	return nil
 }
 
 func (db *DB) acquireBatch() *leveldb.Batch {
@@ -74,7 +73,7 @@ func (db *DB) SetString(key string, value []byte) error {
 	return db.Set(strconv.S2B(key), value)
 }
 
-func (db *DB) SetBulk(kvs []store.KV) error {
+func (db *DB) SetBulk(kvs ...common.KV) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
@@ -94,7 +93,7 @@ func (db *DB) get(key []byte) ([]byte, error) {
 	value, err := db.db.Get(key, nil)
 
 	switch {
-	case errors.Is(err, leveldb.ErrNotFound):
+	case err != nil && errors.Is(err, leveldb.ErrNotFound):
 		return nil, nil
 	case err != nil:
 		return nil, err
@@ -114,11 +113,11 @@ func (db *DB) GetString(key string) (val []byte, err error) {
 	return db.Get(strconv.S2B(key))
 }
 
-func (db *DB) GetBulk(keys [][]byte) ([]store.KV, error) {
+func (db *DB) GetBulk(keys ...[]byte) ([]common.KV, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	kvs := make([]store.KV, len(keys))
+	kvs := make([]common.KV, len(keys))
 
 	for i := range keys {
 		key := keys[i]
@@ -161,7 +160,7 @@ func (db *DB) DelString(key string) error {
 	return db.Del(strconv.S2B(key))
 }
 
-func (db *DB) DelBulk(keys [][]byte) error {
+func (db *DB) DelBulk(keys ...[]byte) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
@@ -175,50 +174,20 @@ func (db *DB) DelBulk(keys [][]byte) error {
 	return db.db.Write(batch, &db.wo)
 }
 
-func (db *DB) Keys(pattern []byte, limit int, withvals bool) ([]store.KV, error) {
+func (db *DB) Iter(fn common.IterFunc) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	var kvs []store.KV
+	it := db.db.NewIterator(nil, nil)
+	defer it.Release()
 
-	spattern := strconv.B2S(pattern)
-	min, max := match.Allowable(spattern)
-	bmin := strconv.S2B(min)
-	useMax := !(len(spattern) > 0 && spattern[0] == '*')
-	iter := db.db.NewIterator(nil, nil)
-
-	for ok := iter.Seek(bmin); ok; ok = iter.Next() {
-		if limit > -1 && len(kvs) >= limit {
-			break
-		}
-
-		key := iter.Key()
-		value := iter.Value()
-
-		strKey := strconv.B2S(key)
-		if useMax && strKey >= max {
-			break
-		}
-
-		if match.Match(strKey, spattern) {
-			kv := store.KV{}
-			kv.Key = append(kv.Key, key...)
-
-			if withvals {
-				kv.Value = append(kv.Value, value...)
-			}
-
-			kvs = append(kvs, kv)
+	for it.First(); it.Next(); {
+		if err := fn(it.Key(), it.Value()); err != nil {
+			return err
 		}
 	}
 
-	iter.Release()
-
-	if err := iter.Error(); err != nil {
-		return nil, err
-	}
-
-	return kvs, nil
+	return it.Error()
 }
 
 func (db *DB) Flush() error {
@@ -231,14 +200,7 @@ func (db *DB) Flush() error {
 
 	os.RemoveAll(db.path)
 
-	ldb, err := newDB(db.path, db.fsync)
-	if err != nil {
-		return err
-	}
-
-	db.db = ldb
-
-	return nil
+	return db.init()
 }
 
 func (db *DB) close() error {

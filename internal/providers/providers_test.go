@@ -20,7 +20,7 @@ var count = flag.Int("count", 1000, "item count for test")
 var stores = []struct {
 	Name    string
 	Path    string
-	Factory func(path string, fsync bool) (store.Store, error)
+	Factory func(path string, fsync bool) (store.DB, error)
 }{
 	{"badger", "badger.db", badger.New},
 	{"leveldb", "leveldb.db", leveldb.New},
@@ -33,10 +33,11 @@ var stores = []struct {
 func prefixKey(i int) []byte {
 	r := make([]byte, 8)
 	binary.BigEndian.PutUint64(r, uint64(i))
+
 	return r
 }
 
-func wrapfsync(fn func(*testing.T, store.Store, bool), s store.Store, fsync bool) func(*testing.T) {
+func wrapfsync(fn func(*testing.T, store.DB, bool), s store.DB, fsync bool) func(*testing.T) {
 	return func(t *testing.T) {
 		fn(t, s, fsync)
 	}
@@ -65,7 +66,7 @@ func TestStore_nofsync(t *testing.T) {
 	}
 }
 
-func testStore(t *testing.T, s store.Store, fsync bool) {
+func testStore(t *testing.T, s store.DB, fsync bool) {
 	v := make([]byte, 256)
 
 	defer s.Close()

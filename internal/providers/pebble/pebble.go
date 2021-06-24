@@ -1,82 +1,97 @@
 package pebble
 
 import (
-	"bytes"
 	"errors"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/savsgio/gotils/strconv"
+	"github.com/savsgio/kvbench/internal/common"
 	"github.com/savsgio/kvbench/internal/store"
 )
 
 type DB struct {
-	db *pebble.DB
-	wo *pebble.WriteOptions
+	path  string
+	fsync bool
+	db    *pebble.DB
+	wo    *pebble.WriteOptions
 }
 
-func New(path string, fsync bool) (store.Store, error) {
-	if path == ":memory:" {
-		return nil, store.ErrMemoryNotAllowed
+func New(path string, fsync bool) (store.DB, error) {
+	db := &DB{
+		path:  path,
+		fsync: fsync,
 	}
 
-	opts := &pebble.Options{}
-	if !fsync {
-		opts.DisableWAL = true
-	}
-
-	wo := &pebble.WriteOptions{}
-	wo.Sync = fsync
-
-	db, err := pebble.Open(path, opts)
-	if err != nil {
+	if err := db.init(); err != nil {
 		return nil, err
 	}
 
-	return &DB{
-		db: db,
-		wo: wo,
-	}, nil
+	return db, nil
 }
 
-func (db *DB) acquireBatch() *pebble.Batch {
-	return db.db.NewBatch()
-}
+func (db *DB) init() error {
+	opts := &pebble.Options{}
+	if !db.fsync {
+		opts.DisableWAL = true
+	}
 
-func (db *DB) releaseBatch(batch *pebble.Batch) {
-	batch.Close()
+	db.wo = &pebble.WriteOptions{
+		Sync: db.fsync,
+	}
+
+	pdb, err := pebble.Open(db.path, opts)
+	if err != nil {
+		return err
+	}
+
+	db.db = pdb
+
+	return nil
 }
 
 func (db *DB) Set(key, value []byte) error {
-	return db.db.Set(key, value, db.wo)
+	if len(key) == 0 {
+		return store.ErrEmptyKey
+	}
+
+	return db.db.Set(key, value, db.wo) // nolint:wrapcheck
 }
 
 func (db *DB) SetString(key string, value []byte) error {
 	return db.Set(strconv.S2B(key), value)
 }
 
-func (db *DB) SetBulk(kvs []store.KV) error {
-	batch := db.acquireBatch()
-	defer db.releaseBatch(batch)
+func (db *DB) SetBulk(kvs ...common.KV) error {
+	batch := db.db.NewBatch()
+	defer batch.Close()
 
 	for i := range kvs {
 		kv := kvs[i]
+
+		if len(kv.Key) == 0 {
+			return store.ErrEmptyKey
+		}
 
 		if err := batch.Set(kv.Key, kv.Value, db.wo); err != nil {
 			return err
 		}
 	}
 
-	return batch.Commit(db.wo)
+	return batch.Commit(db.wo) // nolint:wrapcheck
 }
 
 func (db *DB) Get(key []byte) ([]byte, error) {
+	if len(key) == 0 {
+		return nil, store.ErrEmptyKey
+	}
+
 	v, closer, err := db.db.Get(key)
 
 	switch {
-	case errors.Is(err, pebble.ErrNotFound):
+	case err != nil && errors.Is(err, pebble.ErrNotFound):
 		return nil, nil
 	case err != nil:
-		return nil, err
+		return nil, err // nolint:wrapcheck
 	default:
 		closer.Close()
 	}
@@ -88,11 +103,15 @@ func (db *DB) GetString(key string) (val []byte, err error) {
 	return db.Get(strconv.S2B(key))
 }
 
-func (db *DB) GetBulk(keys [][]byte) ([]store.KV, error) {
-	kvs := make([]store.KV, len(keys))
+func (db *DB) GetBulk(keys ...[]byte) ([]common.KV, error) {
+	kvs := make([]common.KV, len(keys))
 
 	for i := range keys {
 		key := keys[i]
+
+		if len(key) == 0 {
+			return nil, store.ErrEmptyKey
+		}
 
 		value, err := db.Get(key)
 		if err != nil {
@@ -108,62 +127,56 @@ func (db *DB) GetBulk(keys [][]byte) ([]store.KV, error) {
 }
 
 func (db *DB) Del(key []byte) error {
-	return db.db.Delete(key, db.wo)
+	if len(key) == 0 {
+		return store.ErrEmptyKey
+	}
+
+	return db.db.SingleDelete(key, db.wo) // nolint:wrapcheck
 }
 
 func (db *DB) DelString(key string) error {
 	return db.Del(strconv.S2B(key))
 }
 
-func (db *DB) DelBulk(keys [][]byte) error {
-	batch := db.acquireBatch()
-	defer db.releaseBatch(batch)
+func (db *DB) DelBulk(keys ...[]byte) error {
+	batch := db.db.NewBatch()
+	defer batch.Close()
 
 	for i := range keys {
-		if err := batch.Delete(keys[i], db.wo); err != nil {
+		key := keys[i]
+
+		if len(key) == 0 {
+			return store.ErrEmptyKey
+		}
+
+		if err := batch.Delete(key, db.wo); err != nil {
 			return err
 		}
 	}
 
-	return batch.Commit(db.wo)
+	return batch.Commit(db.wo) // nolint:wrapcheck
 }
 
-func (db *DB) Keys(pattern []byte, limit int, withvals bool) ([]store.KV, error) {
-	var kvs []store.KV
+func (db *DB) Iter(fn common.IterFunc) error {
+	snapshot := db.db.NewSnapshot()
+	defer snapshot.Close()
 
-	it := db.db.NewIter(&pebble.IterOptions{})
+	it := snapshot.NewIter(&pebble.IterOptions{})
 	defer it.Close()
 
-	it.SeekGE(pattern)
-
-	for it.Valid() && it.Next() {
-		if limit > -1 && len(kvs) >= limit {
-			break
+	for it.First(); it.Next(); it.Valid() {
+		if err := fn(it.Key(), it.Value()); err != nil {
+			return err
 		}
-
-		key := it.Key()
-		if !bytes.HasPrefix(key, pattern) {
-			continue
-		}
-
-		kv := store.KV{}
-		kv.Key = append(kv.Key, key...)
-
-		if withvals {
-			value := it.Value()
-			kv.Value = append(kv.Value, value...)
-		}
-
-		kvs = append(kvs, kv)
 	}
 
-	return kvs, nil
+	return nil
 }
 
 func (db *DB) Flush() error {
-	return db.db.Flush()
+	return db.db.Flush() // nolint:wrapcheck
 }
 
 func (db *DB) Close() error {
-	return db.db.Close()
+	return db.db.Close() // nolint:wrapcheck
 }

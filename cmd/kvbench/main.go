@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/savsgio/kvbench/internal/common"
 	"github.com/savsgio/kvbench/internal/providers/badger"
 	"github.com/savsgio/kvbench/internal/providers/buntdb"
 	"github.com/savsgio/kvbench/internal/providers/leveldb"
@@ -84,7 +85,7 @@ func genKey(i uint64) []byte {
 }
 
 // test batch writes
-func testBatchWrite(name string, s store.Store) {
+func testBatchWrite(name string, s store.DB) {
 	var wg sync.WaitGroup
 
 	ctx, cancel := context.WithTimeout(context.Background(), *duration)
@@ -100,10 +101,10 @@ func testBatchWrite(name string, s store.Store) {
 			defer wg.Done()
 
 			batchSize := uint64(1000)
-			var kvs []store.KV
+			var kvs []common.KV
 
 			for i := uint64(0); i < batchSize; i++ {
-				kvs = append(kvs, store.KV{
+				kvs = append(kvs, common.KV{
 					Key:   genKey(i),
 					Value: make([]byte, *size),
 				})
@@ -122,7 +123,7 @@ func testBatchWrite(name string, s store.Store) {
 						rand.Read(kv.Value)
 					}
 
-					err := s.SetBulk(kvs)
+					err := s.SetBulk(kvs...)
 					if err != nil {
 						panic(err)
 					}
@@ -142,7 +143,7 @@ func testBatchWrite(name string, s store.Store) {
 }
 
 // test get
-func testGet(name string, s store.Store) {
+func testGet(name string, s store.DB) {
 	var wg sync.WaitGroup
 
 	ctx, cancel := context.WithTimeout(context.Background(), *duration)
@@ -194,7 +195,7 @@ func testGet(name string, s store.Store) {
 }
 
 // test multiple get/one set
-func testGetSet(name string, s store.Store) {
+func testGetSet(name string, s store.DB) {
 	var wg sync.WaitGroup
 
 	ch := make(chan struct{})
@@ -277,7 +278,7 @@ func testGetSet(name string, s store.Store) {
 	)
 }
 
-func testSet(name string, s store.Store) {
+func testSet(name string, s store.DB) {
 	var wg sync.WaitGroup
 
 	ctx, cancel := context.WithTimeout(context.Background(), *duration)
@@ -327,7 +328,7 @@ func testSet(name string, s store.Store) {
 	)
 }
 
-func testDelete(name string, s store.Store) {
+func testDelete(name string, s store.DB) {
 	var wg sync.WaitGroup
 
 	ctx, cancel := context.WithTimeout(context.Background(), *duration)
@@ -377,13 +378,11 @@ func testDelete(name string, s store.Store) {
 	)
 }
 
-func getStore(s string, fsync bool, path string) (store.Store, string, error) {
-	var st store.Store
+func getStore(s string, fsync bool, path string) (store.DB, string, error) {
+	var st store.DB
 	var err error
 
 	switch s {
-	default:
-		err = fmt.Errorf("unknown store type: %v", s)
 	case "badger":
 		if path == "" {
 			path = "badger.db"
@@ -414,6 +413,8 @@ func getStore(s string, fsync bool, path string) (store.Store, string, error) {
 			path = "pogreb.db"
 		}
 		st, err = pogreb.New(path, fsync)
+	default:
+		err = fmt.Errorf("unknown store type: %v", s)
 	}
 
 	return st, path, err

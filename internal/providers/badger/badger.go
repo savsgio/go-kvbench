@@ -3,28 +3,44 @@ package badger
 import (
 	"github.com/dgraph-io/badger/v3"
 	"github.com/savsgio/gotils/strconv"
+	"github.com/savsgio/kvbench/internal/common"
 	"github.com/savsgio/kvbench/internal/store"
 )
 
 type DB struct {
-	db *badger.DB
+	path  string
+	fsync bool
+	db    *badger.DB
 }
 
-func New(path string, fsync bool) (store.Store, error) {
-	opts := badger.DefaultOptions(path)
-	if path == ":memory:" {
-		opts.InMemory = true
+func New(path string, fsync bool) (store.DB, error) {
+	db := &DB{
+		path:  path,
+		fsync: fsync,
 	}
 
-	opts.SyncWrites = fsync
-	db, err := badger.Open(opts)
-	if err != nil {
+	if err := db.init(); err != nil {
 		return nil, err
 	}
 
-	return &DB{
-		db: db,
-	}, nil
+	return db, nil
+}
+
+func (db *DB) init() error {
+	opts := badger.DefaultOptions(db.path)
+	if db.path == ":memory:" {
+		opts.InMemory = true
+	}
+
+	opts.SyncWrites = db.fsync
+	bdb, err := badger.Open(opts)
+	if err != nil {
+		return err
+	}
+
+	db.db = bdb
+
+	return nil
 }
 
 func (db *DB) Set(key, value []byte) error {
@@ -37,14 +53,13 @@ func (db *DB) SetString(key string, value []byte) error {
 	return db.Set(strconv.S2B(key), value)
 }
 
-func (db *DB) SetBulk(kvs []store.KV) error {
+func (db *DB) SetBulk(kvs ...common.KV) error {
 	wb := db.db.NewWriteBatch()
 
 	for i := range kvs {
 		kv := kvs[i]
 
-		err := wb.Set(kv.Key, kv.Value)
-		if err != nil {
+		if err := wb.Set(kv.Key, kv.Value); err != nil {
 			return err
 		}
 	}
@@ -55,26 +70,31 @@ func (db *DB) SetBulk(kvs []store.KV) error {
 func (db *DB) Get(key []byte) (value []byte, err error) {
 	err = db.db.View(func(tx *badger.Txn) error {
 		item, err := tx.Get(key)
-		if err == nil {
-			err = item.Value(func(v []byte) error {
-				value = append(value, v...)
-
-				return nil
-			})
+		if err != nil {
+			return err
 		}
 
-		return err
+		value, err = item.ValueCopy(value)
+		if err != nil {
+			return err
+		}
+
+		return nil
 	})
 
-	return value, err
+	if err != nil {
+		return nil, err
+	}
+
+	return value, nil
 }
 
 func (db *DB) GetString(key string) ([]byte, error) {
 	return db.Get(strconv.S2B(key))
 }
 
-func (db *DB) GetBulk(keys [][]byte) ([]store.KV, error) {
-	kvs := make([]store.KV, len(keys))
+func (db *DB) GetBulk(keys ...[]byte) ([]common.KV, error) {
+	kvs := make([]common.KV, len(keys))
 
 	err := db.db.View(func(tx *badger.Txn) error {
 		for i := range keys {
@@ -85,14 +105,13 @@ func (db *DB) GetBulk(keys [][]byte) ([]store.KV, error) {
 				return err
 			}
 
-			value, err := item.ValueCopy(nil)
+			kv := &kvs[i]
+			kv.Key = append(kv.Key, key...)
+
+			kv.Value, err = item.ValueCopy(kv.Value)
 			if err != nil {
 				return err
 			}
-
-			kv := &kvs[i]
-			kv.Key = append(kv.Key, key...)
-			kv.Value = append(kv.Value, value...)
 		}
 
 		return nil
@@ -115,7 +134,7 @@ func (db *DB) DelString(key string) error {
 	return db.Del(strconv.S2B(key))
 }
 
-func (db *DB) DelBulk(keys [][]byte) error {
+func (db *DB) DelBulk(keys ...[]byte) error {
 	return db.db.Update(func(tx *badger.Txn) error {
 		for i := range keys {
 			if err := tx.Delete(keys[i]); err != nil {
@@ -127,43 +146,27 @@ func (db *DB) DelBulk(keys [][]byte) error {
 	})
 }
 
-func (db *DB) Keys(pattern []byte, limit int, withvals bool) ([]store.KV, error) {
-	var kvs []store.KV
-
-	err := db.db.View(func(tx *badger.Txn) error {
+func (db *DB) Iter(fn common.IterFunc) error {
+	return db.db.View(func(tx *badger.Txn) error {
 		it := tx.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 
-		for it.Seek(pattern); it.ValidForPrefix(pattern); it.Next() {
-			if limit > -1 && len(kvs) >= limit {
-				break
-			}
-
+		for it.Rewind(); it.Valid(); it.Next() {
 			item := it.Item()
+			key := item.KeyCopy(nil)
 
-			kv := store.KV{}
-			kv.Key = append(kv.Key, item.Key()...)
-
-			if withvals {
-				value, err := item.ValueCopy(nil)
-				if err != nil {
-					return err
-				}
-
-				kv.Value = append(kv.Value, value...)
+			value, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
 			}
 
-			kvs = append(kvs, kv)
+			if err := fn(key, value); err != nil {
+				return err
+			}
 		}
 
 		return nil
 	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return kvs, nil
 }
 
 func (db *DB) Flush() error {

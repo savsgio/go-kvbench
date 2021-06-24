@@ -1,50 +1,54 @@
 package pogreb
 
 import (
+	"errors"
 	"os"
 	"sync"
 
 	"github.com/akrylysov/pogreb"
 	"github.com/savsgio/gotils/strconv"
+	"github.com/savsgio/kvbench/internal/common"
 	"github.com/savsgio/kvbench/internal/store"
 )
 
 type DB struct {
-	db    *pogreb.DB
 	path  string
 	fsync bool
+	db    *pogreb.DB
 	mu    sync.RWMutex
 }
 
-func New(path string, fsync bool) (store.Store, error) {
-	if path == ":memory:" {
-		return nil, store.ErrMemoryNotAllowed
-	}
-
-	db, err := newDB(path, fsync)
-	if err != nil {
-		return nil, err
-	}
-
-	return &DB{
-		db:    db,
+func New(path string, fsync bool) (store.DB, error) {
+	db := &DB{
 		path:  path,
 		fsync: fsync,
-	}, nil
-}
-
-func newDB(path string, fsync bool) (*pogreb.DB, error) {
-	opts := new(pogreb.Options)
-	if fsync {
-		opts.BackgroundSyncInterval = -1
 	}
 
-	db, err := pogreb.Open(path, opts)
-	if err != nil {
+	if err := db.init(); err != nil {
 		return nil, err
 	}
 
 	return db, nil
+}
+
+func (db *DB) init() error {
+	if db.path == ":memory:" {
+		return store.ErrMemoryNotAllowed
+	}
+
+	opts := new(pogreb.Options)
+	if db.fsync {
+		opts.BackgroundSyncInterval = -1
+	}
+
+	pdb, err := pogreb.Open(db.path, opts)
+	if err != nil {
+		return err
+	}
+
+	db.db = pdb
+
+	return nil
 }
 
 func (db *DB) set(key, value []byte) error {
@@ -62,7 +66,7 @@ func (db *DB) SetString(key string, value []byte) error {
 	return db.Set(strconv.S2B(key), value)
 }
 
-func (db *DB) SetBulk(kvs []store.KV) error {
+func (db *DB) SetBulk(kvs ...common.KV) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
@@ -92,11 +96,11 @@ func (db *DB) GetString(key string) (val []byte, err error) {
 	return db.Get(strconv.S2B(key))
 }
 
-func (db *DB) GetBulk(keys [][]byte) ([]store.KV, error) {
+func (db *DB) GetBulk(keys ...[]byte) ([]common.KV, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	kvs := make([]store.KV, len(keys))
+	kvs := make([]common.KV, len(keys))
 
 	for i := range keys {
 		key := keys[i]
@@ -129,7 +133,7 @@ func (db *DB) DelString(key string) error {
 	return db.Del(strconv.S2B(key))
 }
 
-func (db *DB) DelBulk(keys [][]byte) error {
+func (db *DB) DelBulk(keys ...[]byte) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
@@ -142,8 +146,23 @@ func (db *DB) DelBulk(keys [][]byte) error {
 	return nil
 }
 
-func (db *DB) Keys(pattern []byte, limit int, withvals bool) ([]store.KV, error) {
-	return nil, store.ErrUnsupported
+func (db *DB) Iter(fn common.IterFunc) error {
+	it := db.db.Items()
+
+	for {
+		key, value, err := it.Next()
+
+		switch {
+		case err != nil && errors.Is(err, pogreb.ErrIterationDone):
+			return nil
+		case err != nil:
+			return err
+		}
+
+		if err := fn(key, value); err != nil {
+			return err
+		}
+	}
 }
 
 func (db *DB) Flush() error {
@@ -156,14 +175,7 @@ func (db *DB) Flush() error {
 
 	os.RemoveAll(db.path)
 
-	pdb, err := newDB(db.path, db.fsync)
-	if err != nil {
-		return err
-	}
-
-	db.db = pdb
-
-	return nil
+	return db.init()
 }
 
 func (db *DB) close() error {

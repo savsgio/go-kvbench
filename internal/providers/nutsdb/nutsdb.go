@@ -1,54 +1,68 @@
 package nutsdb
 
 import (
-	"os"
+	"errors"
 	"sync"
 
 	"github.com/savsgio/gotils/strconv"
+	"github.com/savsgio/kvbench/internal/common"
 	"github.com/savsgio/kvbench/internal/store"
 	"github.com/xujiajun/nutsdb"
 )
 
-const bucket = "kvbench"
+const (
+	bucket  = "r2d2"
+	keyInit = "init"
+)
 
 type DB struct {
-	db    *nutsdb.DB
 	path  string
 	fsync bool
+	db    *nutsdb.DB
 	mu    sync.RWMutex
 }
 
-func New(path string, fsync bool) (store.Store, error) {
-	if path == ":memory:" {
-		return nil, store.ErrMemoryNotAllowed
-	}
-
-	db, err := newDB(path, fsync)
-	if err != nil {
-		return nil, err
-	}
-
-	return &DB{
-		db:    db,
+func New(path string, fsync bool) (store.DB, error) {
+	db := &DB{
 		path:  path,
 		fsync: fsync,
-	}, nil
-}
+	}
 
-func newDB(path string, fsync bool) (*nutsdb.DB, error) {
-	opt := nutsdb.DefaultOptions
-	opt.SyncEnable = fsync
-	opt.Dir = path
-
-	db, err := nutsdb.Open(opt)
-	if err != nil {
+	if err := db.init(); err != nil {
 		return nil, err
 	}
 
 	return db, nil
 }
 
+func (db *DB) init() error {
+	opt := nutsdb.DefaultOptions
+	opt.Dir = db.path
+	opt.EntryIdxMode = nutsdb.HintBPTSparseIdxMode
+	opt.SyncEnable = db.fsync
+
+	ndb, err := nutsdb.Open(opt)
+	if err != nil {
+		return err
+	}
+
+	db.db = ndb
+
+	if err := db.SetString(keyInit, nil); err != nil {
+		return store.ErrInit
+	}
+
+	if err := db.DelString(keyInit); err != nil {
+		return store.ErrInit
+	}
+
+	return nil
+}
+
 func (db *DB) Set(key, value []byte) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
 	return db.db.Update(func(tx *nutsdb.Tx) error {
 		return tx.Put(bucket, key, value, 0)
 	})
@@ -58,7 +72,7 @@ func (db *DB) SetString(key string, value []byte) error {
 	return db.Set(strconv.S2B(key), value)
 }
 
-func (db *DB) SetBulk(kvs []store.KV) error {
+func (db *DB) SetBulk(kvs ...common.KV) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
@@ -81,7 +95,11 @@ func (db *DB) Get(key []byte) (value []byte, err error) {
 
 	err = db.db.View(func(tx *nutsdb.Tx) error {
 		e, err := tx.Get(bucket, key)
-		if err != nil {
+
+		switch {
+		case err != nil && errors.Is(err, nutsdb.ErrKeyNotFound), errors.Is(err, nutsdb.ErrNotFoundKey):
+			return nil
+		case err != nil:
 			return err
 		}
 
@@ -97,18 +115,18 @@ func (db *DB) GetString(key string) ([]byte, error) {
 	return db.Get(strconv.S2B(key))
 }
 
-func (db *DB) GetBulk(keys [][]byte) ([]store.KV, error) {
+func (db *DB) GetBulk(keys ...[]byte) ([]common.KV, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	kvs := make([]store.KV, len(keys))
+	kvs := make([]common.KV, len(keys))
 
 	err := db.db.View(func(tx *nutsdb.Tx) error {
 		for i := range keys {
 			key := keys[i]
 
 			e, err := tx.Get(bucket, key)
-			if err != nil {
+			if err != nil && !(errors.Is(err, nutsdb.ErrKeyNotFound) || errors.Is(err, nutsdb.ErrNotFoundKey)) {
 				return err
 			}
 
@@ -140,13 +158,15 @@ func (db *DB) DelString(key string) error {
 	return db.Del(strconv.S2B(key))
 }
 
-func (db *DB) DelBulk(keys [][]byte) error {
+func (db *DB) DelBulk(keys ...[]byte) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
 	return db.db.Update(func(tx *nutsdb.Tx) error {
 		for i := range keys {
-			if err := tx.Delete(bucket, keys[i]); err != nil {
+			key := keys[i]
+
+			if err := tx.Delete(bucket, key); err != nil {
 				return err
 			}
 		}
@@ -155,63 +175,34 @@ func (db *DB) DelBulk(keys [][]byte) error {
 	})
 }
 
-func (db *DB) Keys(pattern []byte, limit int, withvals bool) ([]store.KV, error) {
+func (db *DB) Iter(fn common.IterFunc) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	var kvs []store.KV
+	return db.db.View(func(tx *nutsdb.Tx) error {
+		entries, err := tx.GetAll(bucket)
 
-	err := db.db.View(func(tx *nutsdb.Tx) error {
-		entries, _, err := tx.PrefixScan(bucket, pattern, 0, nutsdb.ScanNoLimit)
-		if err != nil {
+		switch {
+		case err != nil && errors.Is(err, nutsdb.ErrBucketEmpty):
+			return nil
+		case err != nil:
 			return err
 		}
 
 		for i := range entries {
-			if limit > -1 && len(kvs) >= limit {
-				break
-			}
-
 			entry := entries[i]
 
-			kv := store.KV{}
-			kv.Key = append(kv.Key, entry.Key...)
-
-			if withvals {
-				kv.Value = append(kv.Value, entry.Value...)
+			if err := fn(entry.Key, entry.Value); err != nil {
+				return err
 			}
-
-			kvs = append(kvs, kv)
 		}
 
 		return nil
 	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return kvs, nil
 }
 
 func (db *DB) Flush() error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	if err := db.close(); err != nil {
-		return err
-	}
-
-	os.RemoveAll(db.path)
-
-	ndb, err := newDB(db.path, db.fsync)
-	if err != nil {
-		return err
-	}
-
-	db.db = ndb
-
-	return nil
+	return db.db.ActiveFile.Sync()
 }
 
 func (db *DB) close() error {
