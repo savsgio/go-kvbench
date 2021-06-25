@@ -31,9 +31,9 @@ func New(path string, fsync bool) (store.DB, error) {
 
 func (db *DB) init() error {
 	opts := &pebble.Options{}
-	if !db.fsync {
-		opts.DisableWAL = true
-	}
+	// if !db.fsync {
+	// 	opts.DisableWAL = true
+	// }
 
 	db.wo = &pebble.WriteOptions{
 		Sync: db.fsync,
@@ -54,7 +54,7 @@ func (db *DB) Set(key, value []byte) error {
 		return store.ErrEmptyKey
 	}
 
-	return db.db.Set(key, value, db.wo) // nolint:wrapcheck
+	return db.db.Set(key, value, db.wo)
 }
 
 func (db *DB) SetString(key string, value []byte) error {
@@ -77,7 +77,7 @@ func (db *DB) SetBulk(kvs ...common.KV) error {
 		}
 	}
 
-	return batch.Commit(db.wo) // nolint:wrapcheck
+	return batch.Commit(db.wo)
 }
 
 func (db *DB) Get(key []byte) ([]byte, error) {
@@ -91,7 +91,7 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 	case err != nil && errors.Is(err, pebble.ErrNotFound):
 		return nil, nil
 	case err != nil:
-		return nil, err // nolint:wrapcheck
+		return nil, err
 	default:
 		closer.Close()
 	}
@@ -108,10 +108,6 @@ func (db *DB) GetBulk(keys ...[]byte) ([]common.KV, error) {
 
 	for i := range keys {
 		key := keys[i]
-
-		if len(key) == 0 {
-			return nil, store.ErrEmptyKey
-		}
 
 		value, err := db.Get(key)
 		if err != nil {
@@ -131,7 +127,7 @@ func (db *DB) Del(key []byte) error {
 		return store.ErrEmptyKey
 	}
 
-	return db.db.SingleDelete(key, db.wo) // nolint:wrapcheck
+	return db.db.SingleDelete(key, db.wo)
 }
 
 func (db *DB) DelString(key string) error {
@@ -154,7 +150,7 @@ func (db *DB) DelBulk(keys ...[]byte) error {
 		}
 	}
 
-	return batch.Commit(db.wo) // nolint:wrapcheck
+	return batch.Commit(db.wo)
 }
 
 func (db *DB) Iter(fn common.IterFunc) error {
@@ -164,7 +160,9 @@ func (db *DB) Iter(fn common.IterFunc) error {
 	it := snapshot.NewIter(&pebble.IterOptions{})
 	defer it.Close()
 
-	for it.First(); it.Next(); it.Valid() {
+	it.First()
+
+	for it.Next() {
 		if err := fn(it.Key(), it.Value()); err != nil {
 			return err
 		}
@@ -174,9 +172,9 @@ func (db *DB) Iter(fn common.IterFunc) error {
 }
 
 func (db *DB) Flush() error {
-	return db.db.Flush() // nolint:wrapcheck
+	return db.db.Flush()
 }
 
 func (db *DB) Close() error {
-	return db.db.Close() // nolint:wrapcheck
+	return db.db.Close()
 }

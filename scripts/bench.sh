@@ -14,7 +14,9 @@ export LD_LIBRARY_PATH=/usr/local/lib
 echo "=========== test nofsync ==========="
 for i in "${STORES[@]}"
 do
-	echo "Store: $i"
+	dt=`date`
+
+	echo "[$dt] Store: $i"
 	./bin/kvbench -d 1m -size ${SIZE} -s "$i" >> benchmarks/test_$i.log 2>&1
 
 	sleep 1m
@@ -29,7 +31,9 @@ echo "=========== test fsync ==========="
 
 for i in "${STORES[@]}"
 do
-	echo "Store: $i"
+	dt=`date`
+
+	echo "[$dt] Store: $i"
 	./bin/kvbench -d 1m -size ${SIZE} -s "$i" -fsync >> benchmarks/test_$i.log 2>&1
 
 	sleep 1m

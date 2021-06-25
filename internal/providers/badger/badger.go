@@ -1,6 +1,9 @@
 package badger
 
 import (
+	"errors"
+	"sync"
+
 	"github.com/dgraph-io/badger/v3"
 	"github.com/savsgio/gotils/strconv"
 	"github.com/savsgio/kvbench/internal/common"
@@ -11,6 +14,7 @@ type DB struct {
 	path  string
 	fsync bool
 	db    *badger.DB
+	mu    sync.RWMutex
 }
 
 func New(path string, fsync bool) (store.DB, error) {
@@ -28,11 +32,12 @@ func New(path string, fsync bool) (store.DB, error) {
 
 func (db *DB) init() error {
 	opts := badger.DefaultOptions(db.path)
+	opts.SyncWrites = db.fsync
+
 	if db.path == ":memory:" {
 		opts.InMemory = true
 	}
 
-	opts.SyncWrites = db.fsync
 	bdb, err := badger.Open(opts)
 	if err != nil {
 		return err
@@ -44,6 +49,13 @@ func (db *DB) init() error {
 }
 
 func (db *DB) Set(key, value []byte) error {
+	if len(key) == 0 {
+		return store.ErrEmptyKey
+	}
+
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
 	return db.db.Update(func(tx *badger.Txn) error {
 		return tx.Set(key, value)
 	})
@@ -54,12 +66,23 @@ func (db *DB) SetString(key string, value []byte) error {
 }
 
 func (db *DB) SetBulk(kvs ...common.KV) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
 	wb := db.db.NewWriteBatch()
 
 	for i := range kvs {
 		kv := kvs[i]
 
+		if len(kv.Key) == 0 {
+			wb.Cancel()
+
+			return store.ErrEmptyKey
+		}
+
 		if err := wb.Set(kv.Key, kv.Value); err != nil {
+			wb.Cancel()
+
 			return err
 		}
 	}
@@ -68,9 +91,20 @@ func (db *DB) SetBulk(kvs ...common.KV) error {
 }
 
 func (db *DB) Get(key []byte) (value []byte, err error) {
-	err = db.db.View(func(tx *badger.Txn) error {
+	if len(key) == 0 {
+		return nil, store.ErrEmptyKey
+	}
+
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	if err = db.db.View(func(tx *badger.Txn) error {
 		item, err := tx.Get(key)
-		if err != nil {
+
+		switch {
+		case err != nil && errors.Is(err, badger.ErrKeyNotFound):
+			return nil
+		case err != nil:
 			return err
 		}
 
@@ -80,9 +114,7 @@ func (db *DB) Get(key []byte) (value []byte, err error) {
 		}
 
 		return nil
-	})
-
-	if err != nil {
+	}); err != nil {
 		return nil, err
 	}
 
@@ -94,19 +126,30 @@ func (db *DB) GetString(key string) ([]byte, error) {
 }
 
 func (db *DB) GetBulk(keys ...[]byte) ([]common.KV, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
 	kvs := make([]common.KV, len(keys))
 
-	err := db.db.View(func(tx *badger.Txn) error {
+	if err := db.db.View(func(tx *badger.Txn) error {
 		for i := range keys {
 			key := keys[i]
 
-			item, err := tx.Get(key)
-			if err != nil {
-				return err
+			if len(key) == 0 {
+				return store.ErrEmptyKey
 			}
 
 			kv := &kvs[i]
 			kv.Key = append(kv.Key, key...)
+
+			item, err := tx.Get(key)
+
+			switch {
+			case err != nil && errors.Is(err, badger.ErrKeyNotFound):
+				continue
+			case err != nil:
+				return err
+			}
 
 			kv.Value, err = item.ValueCopy(kv.Value)
 			if err != nil {
@@ -115,9 +158,7 @@ func (db *DB) GetBulk(keys ...[]byte) ([]common.KV, error) {
 		}
 
 		return nil
-	})
-
-	if err != nil {
+	}); err != nil {
 		return nil, err
 	}
 
@@ -125,6 +166,13 @@ func (db *DB) GetBulk(keys ...[]byte) ([]common.KV, error) {
 }
 
 func (db *DB) Del(key []byte) error {
+	if len(key) == 0 {
+		return store.ErrEmptyKey
+	}
+
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
 	return db.db.Update(func(tx *badger.Txn) error {
 		return tx.Delete(key)
 	})
@@ -135,9 +183,18 @@ func (db *DB) DelString(key string) error {
 }
 
 func (db *DB) DelBulk(keys ...[]byte) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
 	return db.db.Update(func(tx *badger.Txn) error {
 		for i := range keys {
-			if err := tx.Delete(keys[i]); err != nil {
+			key := keys[i]
+
+			if len(key) == 0 {
+				return store.ErrEmptyKey
+			}
+
+			if err := tx.Delete(key); err != nil {
 				return err
 			}
 		}
@@ -147,6 +204,9 @@ func (db *DB) DelBulk(keys ...[]byte) error {
 }
 
 func (db *DB) Iter(fn common.IterFunc) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
 	return db.db.View(func(tx *badger.Txn) error {
 		it := tx.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
@@ -170,9 +230,22 @@ func (db *DB) Iter(fn common.IterFunc) error {
 }
 
 func (db *DB) Flush() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	return db.db.Sync()
+}
+
+func (db *DB) Reset() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	return db.db.DropAll()
 }
 
 func (db *DB) Close() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	return db.db.Close()
 }
